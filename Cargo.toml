@@ -1,0 +1,10 @@
+[package]
+name = "ratelint"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "A strict-by-default linter for rate-limit rule files"
+
+[[bin]]
+name = "ratelint"
+path = "src/main.rs"
