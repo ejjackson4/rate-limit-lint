@@ -134,3 +134,97 @@ pub fn parse(source: &str) -> Result<Vec<Rule>, ParseError> {
 
     Ok(rules)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_a_complete_rule() {
+        let rules = parse(
+            "[login]\npath = /api/login\nlimit = 5\nwindow = 60\nburst = 10\n",
+        )
+        .unwrap();
+
+        assert_eq!(rules.len(), 1);
+        let rule = &rules[0];
+        assert_eq!(rule.name, "login");
+        assert_eq!(rule.line, 1);
+        assert_eq!(rule.path.as_ref().unwrap().value, "/api/login");
+        assert_eq!(rule.path.as_ref().unwrap().line, 2);
+        assert_eq!(rule.limit.as_ref().unwrap().value, "5");
+        assert_eq!(rule.window.as_ref().unwrap().value, "60");
+        assert_eq!(rule.burst.as_ref().unwrap().value, "10");
+    }
+
+    #[test]
+    fn ignores_blank_lines_and_comments() {
+        let rules = parse(
+            "# a rules file\n\n[login]\n# path comes first\npath = /api/login\n\nlimit = 5\nwindow = 60\n",
+        )
+        .unwrap();
+
+        assert_eq!(rules.len(), 1);
+        assert_eq!(rules[0].path.as_ref().unwrap().value, "/api/login");
+    }
+
+    #[test]
+    fn parses_multiple_sections() {
+        let rules = parse(
+            "[login]\npath = /api/login\nlimit = 5\nwindow = 60\n\n[search]\npath = /api/search\nlimit = 100\nwindow = 60\n",
+        )
+        .unwrap();
+
+        assert_eq!(rules.len(), 2);
+        assert_eq!(rules[0].name, "login");
+        assert_eq!(rules[1].name, "search");
+        assert_eq!(rules[1].line, 6);
+    }
+
+    #[test]
+    fn trims_whitespace_around_keys_and_values() {
+        let rules = parse("[login]\n  path   =   /api/login  \n").unwrap();
+        assert_eq!(rules[0].path.as_ref().unwrap().value, "/api/login");
+    }
+
+    #[test]
+    fn rejects_unterminated_section_header() {
+        let err = parse("[login\npath = /api/login\n").unwrap_err();
+        assert_eq!(err.line, 1);
+        assert!(err.message.contains("unterminated"));
+    }
+
+    #[test]
+    fn rejects_empty_section_header() {
+        let err = parse("[]\n").unwrap_err();
+        assert_eq!(err.line, 1);
+        assert!(err.message.contains("must not be empty"));
+    }
+
+    #[test]
+    fn rejects_key_value_outside_section() {
+        let err = parse("path = /api/login\n").unwrap_err();
+        assert_eq!(err.line, 1);
+        assert!(err.message.contains("outside of any rule section"));
+    }
+
+    #[test]
+    fn rejects_line_without_equals() {
+        let err = parse("[login]\njust some text\n").unwrap_err();
+        assert_eq!(err.line, 2);
+        assert!(err.message.contains("expected 'key = value'"));
+    }
+
+    #[test]
+    fn rejects_unknown_field() {
+        let err = parse("[login]\nmethod = POST\n").unwrap_err();
+        assert_eq!(err.line, 2);
+        assert!(err.message.contains("unknown field 'method'"));
+    }
+
+    #[test]
+    fn empty_source_yields_no_rules() {
+        let rules = parse("").unwrap();
+        assert!(rules.is_empty());
+    }
+}

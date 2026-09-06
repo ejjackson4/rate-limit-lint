@@ -86,6 +86,8 @@ cargo build --release
 ./target/release/ratelint --lenient api-gateway.rules
 ```
 
+Run the test suite with `cargo test`.
+
 ## Status
 
 Early. The rule format and check list are both going to grow — see the

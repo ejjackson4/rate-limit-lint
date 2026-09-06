@@ -165,3 +165,125 @@ fn parse_positive(rule: &Rule, field: &Field, name: &str, findings: &mut Vec<Fin
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::parser;
+
+    fn lines_with(findings: &[Finding]) -> Vec<usize> {
+        findings.iter().map(|f| f.line).collect()
+    }
+
+    fn messages(findings: &[Finding]) -> Vec<&str> {
+        findings.iter().map(|f| f.message.as_str()).collect()
+    }
+
+    #[test]
+    fn clean_strict_rule_has_no_findings() {
+        let rules = parser::parse(
+            "[login]\npath = /api/login\nlimit = 5\nwindow = 60\nburst = 10\n",
+        )
+        .unwrap();
+        let findings = check(&rules, false);
+        assert!(findings.is_empty());
+    }
+
+    #[test]
+    fn reports_missing_required_fields() {
+        let rules = parser::parse("[login]\nlimit = 5\nwindow = 60\nburst = 10\n").unwrap();
+        let findings = check(&rules, false);
+        assert!(messages(&findings)
+            .iter()
+            .any(|m| m.contains("missing required field 'path'")));
+    }
+
+    #[test]
+    fn reports_non_positive_integers() {
+        let rules =
+            parser::parse("[login]\npath = /api/login\nlimit = 0\nwindow = abc\nburst = 10\n")
+                .unwrap();
+        let findings = check(&rules, false);
+        let msgs = messages(&findings);
+        assert!(msgs.iter().any(|m| m.contains("field 'limit' must be a positive integer, got 0")));
+        assert!(msgs
+            .iter()
+            .any(|m| m.contains("field 'window' must be a positive integer, got 'abc'")));
+    }
+
+    #[test]
+    fn reports_path_without_leading_slash() {
+        let rules =
+            parser::parse("[login]\npath = api/login\nlimit = 5\nwindow = 60\nburst = 10\n")
+                .unwrap();
+        let findings = check(&rules, false);
+        assert!(messages(&findings)
+            .iter()
+            .any(|m| m.contains("must start with '/'")));
+    }
+
+    #[test]
+    fn reports_duplicate_paths() {
+        let rules = parser::parse(
+            "[login]\npath = /api/login\nlimit = 5\nwindow = 60\nburst = 10\n\n[login2]\npath = /api/login\nlimit = 5\nwindow = 60\nburst = 10\n",
+        )
+        .unwrap();
+        let findings = check(&rules, false);
+        assert!(messages(&findings)
+            .iter()
+            .any(|m| m.contains("already defined at line 2 by rule 'login'")));
+    }
+
+    #[test]
+    fn reports_burst_below_limit() {
+        let rules =
+            parser::parse("[login]\npath = /api/login\nlimit = 10\nwindow = 60\nburst = 5\n")
+                .unwrap();
+        let findings = check(&rules, false);
+        assert!(messages(&findings)
+            .iter()
+            .any(|m| m.contains("burst (5) must be >= limit (10)")));
+    }
+
+    #[test]
+    fn strict_mode_requires_explicit_burst() {
+        let rules = parser::parse("[search]\npath = /api/search\nlimit = 100\nwindow = 60\n").unwrap();
+
+        let strict_findings = check(&rules, false);
+        assert!(messages(&strict_findings)
+            .iter()
+            .any(|m| m.contains("has no explicit 'burst'")));
+
+        let lenient_findings = check(&rules, true);
+        assert!(lenient_findings.is_empty());
+    }
+
+    #[test]
+    fn strict_mode_flags_absurd_limit_and_window() {
+        let rules = parser::parse(
+            "[login]\npath = /api/login\nlimit = 5000000\nwindow = 999999\nburst = 5000000\n",
+        )
+        .unwrap();
+
+        let strict_findings = check(&rules, false);
+        let msgs = messages(&strict_findings);
+        assert!(msgs.iter().any(|m| m.contains("exceeds the sane maximum of 1000000")));
+        assert!(msgs.iter().any(|m| m.contains("exceeds the sane maximum of 86400s")));
+
+        let lenient_findings = check(&rules, true);
+        assert!(lenient_findings.is_empty());
+    }
+
+    #[test]
+    fn findings_are_sorted_by_line() {
+        let rules = parser::parse(
+            "[login]\npath = api/login\nlimit = 0\nwindow = 60\nburst = 10\n",
+        )
+        .unwrap();
+        let findings = check(&rules, false);
+        let lines = lines_with(&findings);
+        let mut sorted = lines.clone();
+        sorted.sort();
+        assert_eq!(lines, sorted);
+    }
+}
