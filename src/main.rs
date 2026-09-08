@@ -8,10 +8,12 @@ use std::process::ExitCode;
 fn main() -> ExitCode {
     let mut path: Option<String> = None;
     let mut lenient = false;
+    let mut json = false;
 
     for arg in env::args().skip(1) {
         match arg.as_str() {
             "--lenient" => lenient = true,
+            "--json" => json = true,
             "-h" | "--help" => {
                 print_usage();
                 return ExitCode::SUCCESS;
@@ -44,34 +46,46 @@ fn main() -> ExitCode {
     let rules = match parser::parse(&source) {
         Ok(r) => r,
         Err(e) => {
-            eprintln!("{}:{}: {}", path, e.line, e.message);
+            if json {
+                println!(
+                    "{{\"file\":{},\"parse_error\":{{\"line\":{},\"message\":{}}}}}",
+                    json_string(&path),
+                    e.line,
+                    json_string(&e.message)
+                );
+            } else {
+                eprintln!("{}:{}: {}", path, e.line, e.message);
+            }
             return ExitCode::from(2);
         }
     };
 
     let findings = lint::check(&rules, lenient);
-    let mut has_error = false;
+    let has_error = findings
+        .iter()
+        .any(|f| matches!(f.severity, lint::Severity::Error));
 
-    for finding in &findings {
-        if matches!(finding.severity, lint::Severity::Error) {
-            has_error = true;
+    if json {
+        print_json(&path, rules.len(), &findings);
+    } else {
+        for finding in &findings {
+            println!(
+                "{}:{}: {}: {}",
+                path,
+                finding.line,
+                finding.severity.label(),
+                finding.message
+            );
         }
-        println!(
-            "{}:{}: {}: {}",
-            path,
-            finding.line,
-            finding.severity.label(),
-            finding.message
-        );
-    }
 
-    if findings.is_empty() {
-        println!(
-            "{}: no findings ({} rule{})",
-            path,
-            rules.len(),
-            if rules.len() == 1 { "" } else { "s" }
-        );
+        if findings.is_empty() {
+            println!(
+                "{}: no findings ({} rule{})",
+                path,
+                rules.len(),
+                if rules.len() == 1 { "" } else { "s" }
+            );
+        }
     }
 
     if has_error {
@@ -81,11 +95,80 @@ fn main() -> ExitCode {
     }
 }
 
+fn print_json(path: &str, rule_count: usize, findings: &[lint::Finding]) {
+    let mut out = String::new();
+    out.push_str("{\"file\":");
+    out.push_str(&json_string(path));
+    out.push_str(",\"rules\":");
+    out.push_str(&rule_count.to_string());
+    out.push_str(",\"findings\":[");
+    for (i, finding) in findings.iter().enumerate() {
+        if i > 0 {
+            out.push(',');
+        }
+        out.push_str("{\"line\":");
+        out.push_str(&finding.line.to_string());
+        out.push_str(",\"severity\":");
+        out.push_str(&json_string(finding.severity.label()));
+        out.push_str(",\"message\":");
+        out.push_str(&json_string(&finding.message));
+        out.push('}');
+    }
+    out.push_str("]}");
+    println!("{}", out);
+}
+
+/// Encodes a string as a JSON string literal, including the surrounding quotes.
+fn json_string(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
+}
+
 fn print_usage() {
-    eprintln!("usage: ratelint [--lenient] <rules-file>");
+    eprintln!("usage: ratelint [--lenient] [--json] <rules-file>");
     eprintln!();
     eprintln!("checks a rate-limit rule file for missing fields, bad values,");
     eprintln!("duplicate paths, and burst/limit inconsistencies.");
     eprintln!();
     eprintln!("--lenient   relax strict-only checks (missing burst, absurd limits)");
+    eprintln!("--json      print findings as a single JSON object on stdout");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::json_string;
+
+    #[test]
+    fn escapes_quotes_and_backslashes() {
+        assert_eq!(json_string("say \"hi\"\\now"), "\"say \\\"hi\\\"\\\\now\"");
+    }
+
+    #[test]
+    fn escapes_newlines_tabs_and_carriage_returns() {
+        assert_eq!(json_string("a\nb\tc\rd"), "\"a\\nb\\tc\\rd\"");
+    }
+
+    #[test]
+    fn escapes_other_control_characters_as_unicode_points() {
+        let bell = char::from_u32(7).unwrap();
+        assert_eq!(json_string(&bell.to_string()), "\"\\u0007\"");
+    }
+
+    #[test]
+    fn leaves_plain_text_untouched() {
+        assert_eq!(json_string("/api/login"), "\"/api/login\"");
+    }
 }

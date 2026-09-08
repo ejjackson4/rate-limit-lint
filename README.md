@@ -63,6 +63,17 @@ large `limit`/`window` values). It never turns off structural checks like
 missing `path`/`limit`/`window`, bad integers, or two rules claiming the
 same path — those stay errors either way.
 
+For CI, pass `--json` to get a single JSON object on stdout instead of the
+line-oriented text output:
+
+```
+$ ratelint --json api-gateway.rules
+{"file":"api-gateway.rules","rules":2,"findings":[{"line":8,"severity":"error","message":"rule 'search' has no explicit 'burst'; add one or pass --lenient to default it to 'limit'"}]}
+```
+
+A file that fails to parse produces `{"file":...,"parse_error":{"line":...,"message":...}}`
+instead. Exit codes are unaffected by `--json`.
+
 Exit codes: `0` if there are no errors, `1` if any rule produced an error,
 `2` for usage problems (bad arguments, unreadable file, malformed rule
 file).
