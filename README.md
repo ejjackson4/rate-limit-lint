@@ -63,12 +63,34 @@ large `limit`/`window` values). It never turns off structural checks like
 missing `path`/`limit`/`window`, bad integers, or two rules claiming the
 same path — those stay errors either way.
 
+If you'd rather have ratelint fill in the missing `burst` than write it
+yourself, pass `--fix`. It rewrites the file in place, defaulting `burst` to
+`limit` for any rule that has a valid `limit` but no `burst`, then lints the
+result as usual:
+
+```
+$ ratelint --fix api-gateway.rules
+api-gateway.rules:8: fix: added 'burst = 100' to rule 'search'
+api-gateway.rules: no findings (2 rules)
+```
+
+`--fix` only touches that one case. A rule with no `limit`, or a `limit`
+that isn't a valid positive integer, is left alone — those need a human to
+decide the right value, so they still show up as ordinary findings.
+
 For CI, pass `--json` to get a single JSON object on stdout instead of the
 line-oriented text output:
 
 ```
 $ ratelint --json api-gateway.rules
-{"file":"api-gateway.rules","rules":2,"findings":[{"line":8,"severity":"error","message":"rule 'search' has no explicit 'burst'; add one or pass --lenient to default it to 'limit'"}]}
+{"file":"api-gateway.rules","rules":2,"fixed":[],"findings":[{"line":8,"severity":"error","message":"rule 'search' has no explicit 'burst'; add one or pass --lenient to default it to 'limit'"}]}
+```
+
+Combined with `--fix`, the `fixed` array lists what was changed:
+
+```
+$ ratelint --json --fix api-gateway.rules
+{"file":"api-gateway.rules","rules":2,"fixed":[{"line":8,"rule":"search","field":"burst","value":100}],"findings":[]}
 ```
 
 A file that fails to parse produces `{"file":...,"parse_error":{"line":...,"message":...}}`
@@ -77,6 +99,13 @@ instead. Exit codes are unaffected by `--json`.
 Exit codes: `0` if there are no errors, `1` if any rule produced an error,
 `2` for usage problems (bad arguments, unreadable file, malformed rule
 file).
+
+## Auto-fixing
+
+`--fix` currently handles one case: a rule with a valid `limit` but no
+`burst` gets `burst = <limit>` appended to its section. That's the only
+issue in the list below that has an unambiguous correct value to fill in;
+everything else needs a person to decide what the right value actually is.
 
 ## What it catches today
 

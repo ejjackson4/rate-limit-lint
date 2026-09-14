@@ -1,3 +1,4 @@
+mod fix;
 mod lint;
 mod parser;
 
@@ -9,11 +10,13 @@ fn main() -> ExitCode {
     let mut path: Option<String> = None;
     let mut lenient = false;
     let mut json = false;
+    let mut fix_mode = false;
 
     for arg in env::args().skip(1) {
         match arg.as_str() {
             "--lenient" => lenient = true,
             "--json" => json = true,
+            "--fix" => fix_mode = true,
             "-h" | "--help" => {
                 print_usage();
                 return ExitCode::SUCCESS;
@@ -43,7 +46,7 @@ fn main() -> ExitCode {
         }
     };
 
-    let rules = match parser::parse(&source) {
+    let mut rules = match parser::parse(&source) {
         Ok(r) => r,
         Err(e) => {
             if json {
@@ -60,14 +63,40 @@ fn main() -> ExitCode {
         }
     };
 
+    let mut fixes = Vec::new();
+    if fix_mode {
+        let (fixed_source, applied) = fix::apply(&source, &rules);
+        if !applied.is_empty() {
+            if let Err(e) = fs::write(&path, &fixed_source) {
+                eprintln!("{}: {}", path, e);
+                return ExitCode::from(2);
+            }
+            rules = match parser::parse(&fixed_source) {
+                Ok(r) => r,
+                Err(e) => {
+                    eprintln!("{}:{}: {}", path, e.line, e.message);
+                    return ExitCode::from(2);
+                }
+            };
+            fixes = applied;
+        }
+    }
+
     let findings = lint::check(&rules, lenient);
     let has_error = findings
         .iter()
         .any(|f| matches!(f.severity, lint::Severity::Error));
 
     if json {
-        print_json(&path, rules.len(), &findings);
+        print_json(&path, rules.len(), &findings, &fixes);
     } else {
+        for applied in &fixes {
+            println!(
+                "{}:{}: fix: added 'burst = {}' to rule '{}'",
+                path, applied.line, applied.value, applied.rule
+            );
+        }
+
         for finding in &findings {
             println!(
                 "{}:{}: {}: {}",
@@ -95,13 +124,26 @@ fn main() -> ExitCode {
     }
 }
 
-fn print_json(path: &str, rule_count: usize, findings: &[lint::Finding]) {
+fn print_json(path: &str, rule_count: usize, findings: &[lint::Finding], fixes: &[fix::Fix]) {
     let mut out = String::new();
     out.push_str("{\"file\":");
     out.push_str(&json_string(path));
     out.push_str(",\"rules\":");
     out.push_str(&rule_count.to_string());
-    out.push_str(",\"findings\":[");
+    out.push_str(",\"fixed\":[");
+    for (i, applied) in fixes.iter().enumerate() {
+        if i > 0 {
+            out.push(',');
+        }
+        out.push_str("{\"line\":");
+        out.push_str(&applied.line.to_string());
+        out.push_str(",\"rule\":");
+        out.push_str(&json_string(&applied.rule));
+        out.push_str(",\"field\":\"burst\",\"value\":");
+        out.push_str(&applied.value.to_string());
+        out.push('}');
+    }
+    out.push_str("],\"findings\":[");
     for (i, finding) in findings.iter().enumerate() {
         if i > 0 {
             out.push(',');
@@ -138,13 +180,15 @@ fn json_string(s: &str) -> String {
 }
 
 fn print_usage() {
-    eprintln!("usage: ratelint [--lenient] [--json] <rules-file>");
+    eprintln!("usage: ratelint [--lenient] [--json] [--fix] <rules-file>");
     eprintln!();
     eprintln!("checks a rate-limit rule file for missing fields, bad values,");
     eprintln!("duplicate paths, and burst/limit inconsistencies.");
     eprintln!();
     eprintln!("--lenient   relax strict-only checks (missing burst, absurd limits)");
     eprintln!("--json      print findings as a single JSON object on stdout");
+    eprintln!("--fix       fill in auto-fillable issues in place (currently: default");
+    eprintln!("            a missing 'burst' to 'limit') before linting");
 }
 
 #[cfg(test)]
