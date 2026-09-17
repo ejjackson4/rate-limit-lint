@@ -100,6 +100,36 @@ Exit codes: `0` if there are no errors, `1` if any rule produced an error,
 `2` for usage problems (bad arguments, unreadable file, malformed rule
 file).
 
+## Alternate input formats
+
+Most of the time the rate limits already live somewhere else - an nginx
+config, say - and the INI file above would just be a second copy that drifts
+out of sync. Pass `--format=nginx` to lint the config directly instead of
+maintaining a separate rules file:
+
+```
+$ ratelint --format=nginx nginx.conf
+```
+
+ratelint reads `limit_req_zone` directives for the rate (`rate=5r/s` or
+`rate=300r/m`, converted to `limit`/`window`) and `limit_req` directives
+inside `location` blocks for the path and `burst`. Everything else in the
+file - `server`, `http`, `listen`, unrelated directives - is skipped. The
+same checks run afterward: missing burst, absurd limits, duplicate paths,
+and so on, same as the native format.
+
+Two things this format needs that the INI one doesn't:
+
+- one directive or block opener/closer per line - `location /x { limit_req
+  zone=y; }` packed onto a single line isn't parsed
+- a `limit_req` naming a zone with no matching `limit_req_zone` is a parse
+  error, not a lint finding, since there's no rate to check anything against
+
+`--fix` isn't available for this format yet - the missing-burst diagnostic
+still fires, but there's nowhere unambiguous to rewrite the source, since a
+`limit_req` line's `burst=` argument sits next to directives ratelint
+doesn't otherwise touch.
+
 ## Auto-fixing
 
 `--fix` currently handles one case: a rule with a valid `limit` but no

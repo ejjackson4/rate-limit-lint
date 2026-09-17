@@ -1,16 +1,24 @@
 mod fix;
 mod lint;
+mod nginx;
 mod parser;
 
 use std::env;
 use std::fs;
 use std::process::ExitCode;
 
+#[derive(PartialEq, Eq)]
+enum Format {
+    Ini,
+    Nginx,
+}
+
 fn main() -> ExitCode {
     let mut path: Option<String> = None;
     let mut lenient = false;
     let mut json = false;
     let mut fix_mode = false;
+    let mut format = Format::Ini;
 
     for arg in env::args().skip(1) {
         match arg.as_str() {
@@ -20,6 +28,17 @@ fn main() -> ExitCode {
             "-h" | "--help" => {
                 print_usage();
                 return ExitCode::SUCCESS;
+            }
+            other if other.starts_with("--format=") => {
+                format = match &other["--format=".len()..] {
+                    "ini" => Format::Ini,
+                    "nginx" => Format::Nginx,
+                    other => {
+                        eprintln!("unknown format '{}': expected 'ini' or 'nginx'", other);
+                        print_usage();
+                        return ExitCode::from(2);
+                    }
+                };
             }
             other if path.is_none() => path = Some(other.to_string()),
             other => {
@@ -38,6 +57,11 @@ fn main() -> ExitCode {
         }
     };
 
+    if fix_mode && format != Format::Ini {
+        eprintln!("--fix is only supported for the default ini format");
+        return ExitCode::from(2);
+    }
+
     let source = match fs::read_to_string(&path) {
         Ok(s) => s,
         Err(e) => {
@@ -46,7 +70,12 @@ fn main() -> ExitCode {
         }
     };
 
-    let mut rules = match parser::parse(&source) {
+    let parse_result = match format {
+        Format::Ini => parser::parse(&source),
+        Format::Nginx => nginx::parse(&source),
+    };
+
+    let mut rules = match parse_result {
         Ok(r) => r,
         Err(e) => {
             if json {
@@ -180,15 +209,16 @@ fn json_string(s: &str) -> String {
 }
 
 fn print_usage() {
-    eprintln!("usage: ratelint [--lenient] [--json] [--fix] <rules-file>");
+    eprintln!("usage: ratelint [--lenient] [--json] [--fix] [--format=ini|nginx] <rules-file>");
     eprintln!();
     eprintln!("checks a rate-limit rule file for missing fields, bad values,");
     eprintln!("duplicate paths, and burst/limit inconsistencies.");
     eprintln!();
-    eprintln!("--lenient   relax strict-only checks (missing burst, absurd limits)");
-    eprintln!("--json      print findings as a single JSON object on stdout");
-    eprintln!("--fix       fill in auto-fillable issues in place (currently: default");
-    eprintln!("            a missing 'burst' to 'limit') before linting");
+    eprintln!("--lenient      relax strict-only checks (missing burst, absurd limits)");
+    eprintln!("--json         print findings as a single JSON object on stdout");
+    eprintln!("--fix          fill in auto-fillable issues in place (currently: default");
+    eprintln!("               a missing 'burst' to 'limit') before linting; ini format only");
+    eprintln!("--format=FMT   input format: 'ini' (default) or 'nginx' (limit_req config)");
 }
 
 #[cfg(test)]
