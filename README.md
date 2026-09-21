@@ -130,6 +130,32 @@ still fires, but there's nowhere unambiguous to rewrite the source, since a
 `limit_req` line's `burst=` argument sits next to directives ratelint
 doesn't otherwise touch.
 
+`--format=envoy` reads the descriptor config used by the
+[envoyproxy/ratelimit](https://github.com/envoyproxy/ratelimit) sidecar:
+
+```yaml
+domain: api-gateway
+descriptors:
+  - key: path
+    value: /api/login
+    rate_limit:
+      unit: second
+      requests_per_unit: 5
+```
+
+Only descriptors with `key: path` become rules - `value` is read as the
+path, and `rate_limit.requests_per_unit`/`unit` become `limit`/`window`
+(`unit` must be `second`, `minute`, `hour`, or `day`). Other descriptor
+kinds, like `remote_address` or `header_match`, are read past and ignored,
+since there's nothing to check them against. This format has no `burst`
+concept, so every rule parses with `burst` unset, which means the
+missing-burst check always fires unless you pass `--lenient`. As with
+`--format=nginx`, `--fix` isn't available here.
+
+Nested `descriptors:` (per-key sub-limits some envoy configs use for
+compound rate limits) aren't supported - every descriptor in the list is
+expected to carry its own `rate_limit` directly.
+
 ## Auto-fixing
 
 `--fix` currently handles one case: a rule with a valid `limit` but no

@@ -1,3 +1,4 @@
+mod envoy;
 mod fix;
 mod lint;
 mod nginx;
@@ -11,6 +12,7 @@ use std::process::ExitCode;
 enum Format {
     Ini,
     Nginx,
+    Envoy,
 }
 
 fn main() -> ExitCode {
@@ -33,8 +35,12 @@ fn main() -> ExitCode {
                 format = match &other["--format=".len()..] {
                     "ini" => Format::Ini,
                     "nginx" => Format::Nginx,
+                    "envoy" => Format::Envoy,
                     other => {
-                        eprintln!("unknown format '{}': expected 'ini' or 'nginx'", other);
+                        eprintln!(
+                            "unknown format '{}': expected 'ini', 'nginx', or 'envoy'",
+                            other
+                        );
                         print_usage();
                         return ExitCode::from(2);
                     }
@@ -73,6 +79,7 @@ fn main() -> ExitCode {
     let parse_result = match format {
         Format::Ini => parser::parse(&source),
         Format::Nginx => nginx::parse(&source),
+        Format::Envoy => envoy::parse(&source),
     };
 
     let mut rules = match parse_result {
@@ -209,7 +216,7 @@ fn json_string(s: &str) -> String {
 }
 
 fn print_usage() {
-    eprintln!("usage: ratelint [--lenient] [--json] [--fix] [--format=ini|nginx] <rules-file>");
+    eprintln!("usage: ratelint [--lenient] [--json] [--fix] [--format=ini|nginx|envoy] <rules-file>");
     eprintln!();
     eprintln!("checks a rate-limit rule file for missing fields, bad values,");
     eprintln!("duplicate paths, and burst/limit inconsistencies.");
@@ -218,7 +225,8 @@ fn print_usage() {
     eprintln!("--json         print findings as a single JSON object on stdout");
     eprintln!("--fix          fill in auto-fillable issues in place (currently: default");
     eprintln!("               a missing 'burst' to 'limit') before linting; ini format only");
-    eprintln!("--format=FMT   input format: 'ini' (default) or 'nginx' (limit_req config)");
+    eprintln!("--format=FMT   input format: 'ini' (default), 'nginx' (limit_req config), or");
+    eprintln!("               'envoy' (ratelimit descriptor config)");
 }
 
 #[cfg(test)]
