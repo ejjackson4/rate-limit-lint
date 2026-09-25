@@ -3,6 +3,7 @@ mod fix;
 mod lint;
 mod nginx;
 mod parser;
+mod suppress;
 
 use std::env;
 use std::fs;
@@ -16,20 +17,34 @@ enum Format {
 }
 
 fn main() -> ExitCode {
+    let args: Vec<String> = env::args().skip(1).collect();
     let mut path: Option<String> = None;
     let mut lenient = false;
     let mut json = false;
     let mut fix_mode = false;
     let mut format = Format::Ini;
+    let mut suppress_path: Option<String> = None;
 
-    for arg in env::args().skip(1) {
-        match arg.as_str() {
+    let mut i = 0;
+    while i < args.len() {
+        match args[i].as_str() {
             "--lenient" => lenient = true,
             "--json" => json = true,
             "--fix" => fix_mode = true,
             "-h" | "--help" => {
                 print_usage();
                 return ExitCode::SUCCESS;
+            }
+            "--suppress" => {
+                i += 1;
+                match args.get(i) {
+                    Some(p) => suppress_path = Some(p.clone()),
+                    None => {
+                        eprintln!("--suppress requires a file path");
+                        print_usage();
+                        return ExitCode::from(2);
+                    }
+                }
             }
             other if other.starts_with("--format=") => {
                 format = match &other["--format=".len()..] {
@@ -53,6 +68,7 @@ fn main() -> ExitCode {
                 return ExitCode::from(2);
             }
         }
+        i += 1;
     }
 
     let path = match path {
@@ -61,6 +77,26 @@ fn main() -> ExitCode {
             print_usage();
             return ExitCode::from(2);
         }
+    };
+
+    let suppressions = match suppress_path {
+        Some(sp) => {
+            let source = match fs::read_to_string(&sp) {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("{}: {}", sp, e);
+                    return ExitCode::from(2);
+                }
+            };
+            match suppress::parse(&source) {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("{}:{}: {}", sp, e.line, e.message);
+                    return ExitCode::from(2);
+                }
+            }
+        }
+        None => suppress::Suppressions::default(),
     };
 
     if fix_mode && format != Format::Ini {
@@ -118,7 +154,7 @@ fn main() -> ExitCode {
         }
     }
 
-    let findings = lint::check(&rules, lenient);
+    let findings = lint::check(&rules, lenient, &suppressions);
     let has_error = findings
         .iter()
         .any(|f| matches!(f.severity, lint::Severity::Error));
@@ -188,6 +224,8 @@ fn print_json(path: &str, rule_count: usize, findings: &[lint::Finding], fixes: 
         out.push_str(&finding.line.to_string());
         out.push_str(",\"severity\":");
         out.push_str(&json_string(finding.severity.label()));
+        out.push_str(",\"code\":");
+        out.push_str(&json_string(finding.code));
         out.push_str(",\"message\":");
         out.push_str(&json_string(&finding.message));
         out.push('}');
@@ -216,7 +254,8 @@ fn json_string(s: &str) -> String {
 }
 
 fn print_usage() {
-    eprintln!("usage: ratelint [--lenient] [--json] [--fix] [--format=ini|nginx|envoy] <rules-file>");
+    eprintln!("usage: ratelint [--lenient] [--json] [--fix] [--format=ini|nginx|envoy]");
+    eprintln!("                [--suppress FILE] <rules-file>");
     eprintln!();
     eprintln!("checks a rate-limit rule file for missing fields, bad values,");
     eprintln!("duplicate paths, and burst/limit inconsistencies.");
@@ -227,6 +266,8 @@ fn print_usage() {
     eprintln!("               a missing 'burst' to 'limit') before linting; ini format only");
     eprintln!("--format=FMT   input format: 'ini' (default), 'nginx' (limit_req config), or");
     eprintln!("               'envoy' (ratelimit descriptor config)");
+    eprintln!("--suppress FILE  skip specific checks on specific rules; see the README for");
+    eprintln!("                 the file format and the list of check names");
 }
 
 #[cfg(test)]

@@ -83,7 +83,7 @@ line-oriented text output:
 
 ```
 $ ratelint --json api-gateway.rules
-{"file":"api-gateway.rules","rules":2,"fixed":[],"findings":[{"line":8,"severity":"error","message":"rule 'search' has no explicit 'burst'; add one or pass --lenient to default it to 'limit'"}]}
+{"file":"api-gateway.rules","rules":2,"fixed":[],"findings":[{"line":8,"severity":"error","code":"missing-burst","message":"rule 'search' has no explicit 'burst'; add one or pass --lenient to default it to 'limit'"}]}
 ```
 
 Combined with `--fix`, the `fixed` array lists what was changed:
@@ -165,13 +165,50 @@ everything else needs a person to decide what the right value actually is.
 
 ## What it catches today
 
-- missing `path`, `limit`, or `window`
-- `limit`/`window`/`burst` that aren't positive integers
-- `path` that doesn't start with `/`
-- two rules pointing at the same `path`
-- `burst` lower than `limit`
-- (strict only) no explicit `burst`
-- (strict only) `limit` or `window` past a sane ceiling, likely a typo
+- missing `path`, `limit`, or `window` (`missing-path`, `missing-limit`, `missing-window`)
+- `limit`/`window`/`burst` that aren't positive integers (`invalid-value`)
+- `path` that doesn't start with `/` (`path-format`)
+- two rules pointing at the same `path` (`duplicate-path`)
+- `burst` lower than `limit` (`burst-below-limit`)
+- (strict only) no explicit `burst` (`missing-burst`)
+- (strict only) `limit` or `window` past a sane ceiling, likely a typo (`limit-too-large`, `window-too-large`)
+
+The name in parentheses is the check's stable id, used by `--suppress` below
+and printed as `code` in `--json` output.
+
+## Suppressing specific checks
+
+Sometimes one rule needs an exception rather than a blanket relaxation - a
+legacy endpoint whose burst really is meant to fall back to the limiter's
+default, a batch-import path that legitimately needs a six-figure limit.
+`--lenient` would turn that check off for every rule in the file. Pass
+`--suppress` with a file naming exactly which check to skip on which rule
+instead:
+
+```
+# suppressions.txt
+legacy-export: missing-burst
+bulk-import: limit-too-large
+```
+
+```
+$ ratelint --suppress suppressions.txt api-gateway.rules
+```
+
+Each line is `rule: check[, check...]`. `#` starts a comment, blank lines
+are ignored, and `*` as the rule name suppresses a check across every rule
+in the file:
+
+```
+# every rule in this file intentionally exceeds the sane window ceiling
+*: window-too-large
+```
+
+A suppressed finding is dropped entirely - it isn't printed and doesn't
+count toward the exit code. A check name that isn't one of the ids listed
+above is a usage error rather than a silent no-op, since a typo in a
+suppression file would otherwise mean the check quietly stops running and
+nobody notices.
 
 ## Building
 
